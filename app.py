@@ -28,6 +28,8 @@ class AgentRequest(BaseModel):
     mode: str = "auto"
     team_strategy: str = "collaborative"
     target_directory: Optional[str] = None
+    model_id: Optional[str] = None
+    api_key: Optional[str] = None
 
 class KeyCheckRequest(BaseModel):
     model_id: str
@@ -95,6 +97,36 @@ async def run_agent(req: AgentRequest):
     mode = req.mode
     if mode == "auto":
         mode = "code" if any(x in prompt for x in ["code","script","bug","python","javascript","function","fix","html","react"]) else "agent"
+    if req.api_key and req.model_id and req.model_id not in {"gemini-2.5-flash", "cohere"}:
+        model_names = {
+            "groq-llama": "llama-3.3-70b-versatile", "mistral": "mistral-small-latest",
+            "cerebras": "gpt-oss-120b", "fireworks": "accounts/fireworks/models/llama-v3p1-8b-instruct",
+            "kimi": "kimi-k2.6", "together": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+            "deepseek": "deepseek-chat", "openrouter-free": "openrouter/auto",
+            "openai": "gpt-4o-mini", "anthropic": "claude-3-5-haiku-latest"
+        }
+        bases = {
+            "groq-llama":"https://api.groq.com/openai/v1/chat/completions", "mistral":"https://api.mistral.ai/v1/chat/completions",
+            "cerebras":"https://api.cerebras.ai/v1/chat/completions", "fireworks":"https://api.fireworks.ai/inference/v1/chat/completions",
+            "kimi":"https://api.moonshot.ai/v1/chat/completions", "together":"https://api.together.xyz/v1/chat/completions",
+            "deepseek":"https://api.deepseek.com/chat/completions", "openrouter-free":"https://openrouter.ai/api/v1/chat/completions",
+            "openai":"https://api.openai.com/v1/chat/completions"
+        }
+        try:
+            headers = {"Authorization": f"Bearer {req.api_key}", "Content-Type":"application/json"}
+            if req.model_id == "anthropic":
+                headers = {"x-api-key": req.api_key, "anthropic-version":"2023-06-01", "Content-Type":"application/json"}
+            payload = {"model": model_names.get(req.model_id, "gpt-4o-mini"), "messages":[{"role":"user","content":req.prompt}], "temperature":0.3}
+            async with httpx.AsyncClient(timeout=45) as client:
+                response = await client.post(bases.get(req.model_id, "https://api.openai.com/v1/chat/completions"), headers=headers, json=payload)
+            if response.status_code >= 400:
+                return {"status":"error","inferred_mode":mode,"summary":f"Provider error HTTP {response.status_code}: {response.text[:240]}","steps":[]}
+            body = response.json()
+            answer = body.get("choices", [{}])[0].get("message", {}).get("content", "No response returned.")
+            return {"status":"success","inferred_mode":mode,"summary":answer,"steps":[{"phase":"thinking","agent":"Thanos Router","specialty":"Provider selection","status":"Selected the configured provider and sent your prompt.","output":"Live request started."},{"phase":"executing","agent":model_names.get(req.model_id, req.model_id),"specialty":"Live provider response","status":"Completed real API request.","output":"Response returned by the selected provider."}]}
+        except httpx.HTTPError as exc:
+            return {"status":"error","inferred_mode":mode,"summary":f"Could not reach provider: {exc.__class__.__name__}.","steps":[]}
+
     if "organize" in prompt or "files" in prompt:
         directory = req.target_directory or os.path.expanduser("~")
         steps = [
