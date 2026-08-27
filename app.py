@@ -1,70 +1,25 @@
 import os
-import shutil
-import glob
-import asyncio
-from fastapi import FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
-from typing import List, Optional, Dict
+from typing import Optional
 
 app = FastAPI(title="Thanos OS Agent Orchestrator")
 
+# Links and free-access notes are informational. Keys stay in the browser and are never sent here.
 AI_MODELS_CATALOG = [
-    {
-        "id": "gemini-2.5-flash", 
-        "name": "Google Gemini 2.5 Flash", 
-        "specialty": "Vision, Image Review & Multimodal Analysis", 
-        "provider": "Google AI Studio", 
-        "free_limit": "15 RPM / 1,500 RPD", 
-        "url": "https://aistudio.google.com/app/apikey",
-        "status": "active"
-    },
-    {
-        "id": "llama-3.3-70b", 
-        "name": "Groq Llama 3.3 70B", 
-        "specialty": "Lightning Fast Code Generation & Reasoning", 
-        "provider": "Groq", 
-        "free_limit": "30 RPM / 14,400 RPD", 
-        "url": "https://console.groq.com/keys",
-        "status": "active"
-    },
-    {
-        "id": "openrouter-free", 
-        "name": "OpenRouter Free Router", 
-        "specialty": "General Fallback & Diverse Open-Source Models", 
-        "provider": "OpenRouter", 
-        "free_limit": "Variable (Unlimited free pool)", 
-        "url": "https://openrouter.ai/keys",
-        "status": "active"
-    },
-    {
-        "id": "deepseek-r1", 
-        "name": "DeepSeek R1 (Distilled)", 
-        "specialty": "Advanced Logic, Math & Complex Problem Solving", 
-        "provider": "Groq / Together / OpenRouter", 
-        "free_limit": "Standard Free Tier", 
-        "url": "https://console.deepseek.com/",
-        "status": "active"
-    },
-    {
-        "id": "claude-3-5-haiku", 
-        "name": "Anthropic Claude 3.5 Haiku", 
-        "specialty": "Nuanced Writing, Editing & Assistant Tasks", 
-        "provider": "Anthropic", 
-        "free_limit": "Developer API Key", 
-        "url": "https://console.anthropic.com/",
-        "status": "inactive"
-    },
-    {
-        "id": "gpt-4o-mini", 
-        "name": "OpenAI GPT-4o Mini", 
-        "specialty": "Structured JSON Extraction & General Agent Tasks", 
-        "provider": "OpenAI", 
-        "free_limit": "Developer API Key", 
-        "url": "https://platform.openai.com/api-keys",
-        "status": "inactive"
-    }
+    {"id":"gemini-2.5-flash","name":"Google Gemini","provider":"Google AI Studio","specialty":"Vision, image review, multimodal analysis","free_limit":"Free tier; limits shown in Google AI Studio","url":"https://aistudio.google.com/app/apikey","status":"available"},
+    {"id":"groq-llama","name":"Groq / Llama","provider":"Groq","specialty":"Very fast coding, agents, and reasoning","free_limit":"Free developer access; limits shown in Groq Console","url":"https://console.groq.com/keys","status":"available"},
+    {"id":"openrouter-free","name":"OpenRouter Free Models","provider":"OpenRouter","specialty":"General fallback across free open models","free_limit":"Free models vary; check model page and limits","url":"https://openrouter.ai/keys","status":"available"},
+    {"id":"mistral","name":"Mistral AI","provider":"Mistral Studio","specialty":"Coding, documents/OCR, vision, JSON, and tools","free_limit":"Free mode; monthly and rate limits shown in Studio","url":"https://console.mistral.ai/api-keys","status":"available"},
+    {"id":"cohere","name":"Cohere","provider":"Cohere Dashboard","specialty":"RAG, reranking, embeddings, multilingual agents","free_limit":"Trial key; rate-limited evaluation access","url":"https://dashboard.cohere.com/api-keys","status":"available"},
+    {"id":"cerebras","name":"Cerebras","provider":"Cerebras Cloud","specialty":"Extremely fast reasoning and coding inference","free_limit":"Free trial credits after verified payment method; expires","url":"https://cloud.cerebras.ai/","status":"available"},
+    {"id":"fireworks","name":"Fireworks AI","provider":"Fireworks Dashboard","specialty":"Fast open models, vision, tools, JSON, embeddings","free_limit":"Limited introductory credits; not unlimited","url":"https://app.fireworks.ai/settings/users/api-keys","status":"available"},
+    {"id":"kimi","name":"Kimi / Moonshot AI","provider":"Kimi Platform","specialty":"Long-context coding, visual input, tools, complex workflows","free_limit":"No general free tier documented; usually paid/top-up","url":"https://platform.kimi.ai/console/api-keys","status":"paid"},
+    {"id":"together","name":"Together AI","provider":"Together Projects","specialty":"Open models, image/video, audio, embeddings, fine-tuning","free_limit":"Prepaid API; no general free tier documented","url":"https://api.together.ai/settings/projects/~current/api-keys","status":"paid"},
+    {"id":"anthropic","name":"Anthropic Claude","provider":"Anthropic Console","specialty":"Writing, careful reasoning, coding, and tool use","free_limit":"API billing/credits may be required; check account","url":"https://console.anthropic.com/settings/keys","status":"paid"},
+    {"id":"openai","name":"OpenAI","provider":"OpenAI Platform","specialty":"Structured extraction, vision, coding, and agents","free_limit":"API billing/credits may be required; check account","url":"https://platform.openai.com/api-keys","status":"paid"},
+    {"id":"deepseek","name":"DeepSeek","provider":"DeepSeek Platform","specialty":"Reasoning, mathematics, and coding","free_limit":"Check current official account allowance","url":"https://platform.deepseek.com/api_keys","status":"available"}
 ]
 
 class AgentRequest(BaseModel):
@@ -83,35 +38,29 @@ async def get_models():
 
 @app.post("/api/run-agent")
 async def run_agent(req: AgentRequest):
-    prompt_lower = req.prompt.lower()
-    inferred_mode = req.mode
-    if req.mode == "auto":
-        if any(kw in prompt_lower for kw in ["code", "script", "bug", "python", "javascript", "function", "fix", "html"]):
-            inferred_mode = "code"
-        else:
-            inferred_mode = "agent"
-
-    steps = []
-    if "organize" in prompt_lower or "files" in prompt_lower:
-        target_dir = req.target_directory or os.path.expanduser("~")
+    prompt = req.prompt.lower()
+    mode = req.mode
+    if mode == "auto":
+        mode = "code" if any(x in prompt for x in ["code","script","bug","python","javascript","function","fix","html","react"]) else "agent"
+    if "organize" in prompt or "files" in prompt:
+        directory = req.target_directory or os.path.expanduser("~")
         steps = [
-            {"phase": "thinking", "agent": "Planner (Gemini 2.5 Flash)", "specialty": "Multimodal Analysis", "status": f"Scanning '{target_dir}'...", "output": "Identified file categories: Documents, Images, Code."},
-            {"phase": "executing", "agent": "Local File Agent (Groq Llama 3.3)", "specialty": "OS File Management", "status": "Moving files by extension...", "output": f"Successfully organized files in {target_dir}."},
-            {"phase": "executing", "agent": "Validator (OpenRouter Free)", "specialty": "Safety Check", "status": "Verifying file integrity...", "output": "All file actions completed securely."}
+            {"phase":"thinking","agent":"Planner","specialty":"Intent and safety planning","status":f"Preparing a file plan for {directory}...","output":"Plan ready; no files are changed until the local tool is explicitly enabled."},
+            {"phase":"executing","agent":"Local File Tool","specialty":"OS file management","status":"Ready to organize by extension...","output":"Preview generated. Review the proposed moves before applying them."},
+            {"phase":"executing","agent":"Validator","specialty":"Safety verification","status":"Checking for collisions and protected files...","output":"Human review required before destructive or irreversible moves."}
         ]
-    elif "gmail" in prompt_lower or "email" in prompt_lower or "message" in prompt_lower:
+    elif any(x in prompt for x in ["gmail","email","message"]):
         steps = [
-            {"phase": "thinking", "agent": "Planner (Gemini 2.5 Flash)", "specialty": "Intent Parsing", "status": "Parsing recipient and message...", "output": "Draft parameters extracted."},
-            {"phase": "executing", "agent": "Browser Automator (Groq Llama 3.3)", "specialty": "Gmail Control", "status": "Navigating to mail.google.com...", "output": "Gmail compose box populated. Waiting for user confirmation."},
-            {"phase": "executing", "agent": "Validator (OpenRouter Free)", "specialty": "User Consent", "status": "Paused for human review...", "output": "Please check the open Gmail window."}
+            {"phase":"thinking","agent":"Planner","specialty":"Intent and recipient parsing","status":"Preparing a Gmail draft plan...","output":"Recipient, subject, and message should be reviewed before use."},
+            {"phase":"executing","agent":"Browser Tool","specialty":"Gmail draft control","status":"Ready to open Gmail and populate a draft...","output":"Sending is never automatic; a human confirmation is required."},
+            {"phase":"executing","agent":"Validator","specialty":"Consent and safety","status":"Waiting for human review...","output":"Review the visible Gmail draft before sending."}
         ]
     else:
         steps = [
-            {"phase": "thinking", "agent": "Planner (Gemini 2.5 Flash)", "specialty": "Reasoning", "status": "Analyzing task...", "output": "Task decomposed."},
-            {"phase": "executing", "agent": "Executor (Groq Llama 3.3)", "specialty": "Generation", "status": "Executing operation...", "output": "Operation executed."}
+            {"phase":"thinking","agent":"Planner","specialty":"Task decomposition","status":"Analyzing the request and selecting providers by specialty...","output":"A specialty-routed plan was created."},
+            {"phase":"executing","agent":"Thanos Network","specialty":"Multi-model orchestration","status":"Executing the selected task...","output":"Provider failover should occur only after an official error or rate-limit response."}
         ]
-
-    return {"status": "success", "inferred_mode": inferred_mode, "strategy": req.team_strategy, "steps": steps, "summary": "Task completed successfully using Thanos multi-AI orchestration."}
+    return {"status":"success","inferred_mode":mode,"strategy":req.team_strategy,"steps":steps,"summary":"Thanos created a specialty-routed plan. API keys remain local to this browser."}
 
 if __name__ == "__main__":
     import uvicorn
