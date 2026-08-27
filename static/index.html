@@ -129,13 +129,14 @@
 
         <!-- Collapsible Monitor Drawer (Hidden by default, shown when Monitor AI is clicked) -->
         <div id="monitorDrawer" class="hidden monitor-side liquid-glass rounded-4xl p-5 space-y-3 border border-white/15">
-            <div class="flex items-center justify-between border-b border-white/10 pb-3">
+                <div class="flex items-center justify-between border-b border-white/10 pb-3">
                 <div class="flex items-center space-x-2">
                     <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-300">Live AI Activity & Reasoning Monitor</h3>
+                    <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-300">Live activity</h3>
                 </div>
-                <span id="metaInfo" class="text-[11px] text-slate-400 font-mono">Idle</span>
+                <div class="flex items-center gap-2"><span id="metaInfo" class="text-[11px] text-slate-400">Idle</span><button onclick="toggleMonitor()" aria-label="Close monitor" class="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-white text-sm">&times;</button></div>
             </div>
+            <p class="text-[11px] text-slate-500">Shows the current work stages. Private chain-of-thought is not exposed; you see useful status updates, providers, searches, and actions.</p>
             <div id="outputContainer" class="space-y-3 max-h-[220px] overflow-y-auto pr-2">
                 <div class="text-center text-slate-500 py-6 text-xs font-light">
                     No active agent execution stream. Deploy a prompt to inspect live thinking & executing steps.
@@ -326,6 +327,10 @@
             }
         }
 
+        function formatAnswer(text) {
+            return String(text || '').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/^###?\s+(.*)$/gm, '<strong>$1</strong>').replace(/\n/g, '<br>');
+        }
+
         function scrollChat() {
             const chat = document.getElementById('chatContainer');
             chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' });
@@ -336,7 +341,7 @@
             const data = await response.json();
             if (!data.action_id) throw new Error(data.message || 'Could not prepare approval request.');
             const chat = document.getElementById('chatContainer');
-            chat.innerHTML += `<div id="approval-${data.action_id}" class="liquid-glass rounded-3xl p-4 text-xs text-slate-200 max-w-lg border border-amber-300/30"><div class="font-semibold text-white mb-2">Approval required</div><p class="text-slate-300 mb-3">${data.summary}. Nothing has changed or been sent.</p><div class="flex gap-2"><button class="px-3 py-1.5 rounded-xl bg-white text-black" onclick="approveAction('${data.action_id}', true)">Approve</button><button class="px-3 py-1.5 rounded-xl bg-white/10 text-white" onclick="approveAction('${data.action_id}', false)">Reject</button></div></div>`;
+            chat.innerHTML += `<div id="approval-${data.action_id}" class="liquid-glass rounded-3xl p-4 text-xs text-slate-200 max-w-lg border border-amber-300/30"><div class="font-semibold text-white mb-2">Approval required</div><p class="text-slate-300 mb-2">${data.summary}. Nothing has changed or been sent.</p><p class="text-[11px] text-slate-500 mb-3">For Gmail, Thanos can prepare and open a draft, but it cannot send without your visible confirmation.</p><div class="flex gap-2"><button class="px-3 py-1.5 rounded-xl bg-white text-black" onclick="approveAction('${data.action_id}', true)">Approve</button><button class="px-3 py-1.5 rounded-xl bg-white/10 text-white" onclick="approveAction('${data.action_id}', false)">Reject</button></div></div>`;
             scrollChat();
         }
 
@@ -344,7 +349,7 @@
             const response = await fetch('/api/action/approve', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action_id:actionId, approved})});
             const data = await response.json();
             const card = document.getElementById('approval-' + actionId);
-            if (card) card.innerHTML = `<div class="font-semibold text-white">${data.status === 'approved' ? 'Approved' : 'Rejected'}</div><p class="text-slate-300 mt-1">${data.message || 'Action updated.'}</p>`;
+            if (card) card.innerHTML = `<div class="font-semibold text-white">${data.status === 'approved' ? 'Approved' : 'Rejected'}</div><p class="text-slate-300 mt-1">${data.message || 'Action updated.'}</p>${data.compose_url ? `<a class="inline-block mt-3 px-3 py-1.5 rounded-xl bg-white text-black" target="_blank" rel="noopener" href="${data.compose_url}">Open Gmail draft</a>` : ''}`;
             scrollChat();
         }
 
@@ -395,6 +400,8 @@
             statusBadge.innerText = 'Thinking...';
             chatContainer.innerHTML += `<div id="thinkingIndicator" class="flex justify-start"><div class="liquid-glass rounded-3xl px-4 py-3 text-xs text-slate-300 border border-white/15"><span class="font-semibold text-white">Thanos</span> is thinking <span class="typing-dots"><span></span><span></span><span></span></span></div></div>`;
             scrollChat();
+            document.getElementById('metaInfo').innerText = 'Planning';
+            document.getElementById('outputContainer').innerHTML = '<div class="liquid-glass-input rounded-2xl p-3 text-xs text-slate-300"><span class="text-white font-semibold">Planning</span><br>Choosing the best available providers and preparing the task...</div>';
 
             try {
                 const apiKeys = Object.fromEntries(modelsData.filter(m => localStorage.getItem('thanos-verified-' + m.id) === '1' && localStorage.getItem('thanos-key-' + m.id)).map(m => [m.id, localStorage.getItem('thanos-key-' + m.id)]));
@@ -402,6 +409,8 @@
                 if (!live) {
                     throw new Error('No verified API key is active. Add a key in the AI Providers panel and press Verify first.');
                 }
+                document.getElementById('metaInfo').innerText = mode === 'research' ? 'Searching' : 'Working';
+                document.getElementById('outputContainer').innerHTML += '<div class="liquid-glass-input rounded-2xl p-3 text-xs text-slate-300"><span class="text-white font-semibold">Working</span><br>Waiting for provider responses and checking the result...</div>';
                 const response = await fetch('/api/run-agent', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -423,7 +432,7 @@
                                 <span class="w-2 h-2 rounded-full bg-white"></span>
                                 <span>Thanos Agent Network</span>
                             </div>
-                            <p class="font-light text-slate-300">${data.summary}</p>
+                            <div class="font-light text-slate-300 whitespace-pre-wrap leading-relaxed">${formatAnswer(data.summary)}</div>
                         </div>
                     </div>
                 `;
@@ -442,9 +451,9 @@
                                 </div>
                                 <span class="text-[10px] text-slate-500 font-mono">Step ${idx + 1}</span>
                             </div>
-                            <p class="text-[11px] text-slate-400 font-light italic">${step.status}</p>
-                            <div class="bg-black/60 rounded-xl p-2.5 font-mono text-[10px] text-slate-200 border border-white/5">
-                                ${step.output}
+                            <p class="text-[11px] text-slate-400 font-light">${step.status}</p>
+                            <div class="bg-black/60 rounded-xl p-2.5 text-[10px] text-slate-300 border border-white/5">
+                                ${step.output || ''}
                             </div>
                         </div>
                     `;
