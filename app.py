@@ -1,4 +1,5 @@
 import os
+import httpx
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
@@ -28,6 +29,10 @@ class AgentRequest(BaseModel):
     team_strategy: str = "collaborative"
     target_directory: Optional[str] = None
 
+class KeyCheckRequest(BaseModel):
+    model_id: str
+    api_key: str
+
 @app.get("/", response_class=HTMLResponse)
 async def read_index():
     return FileResponse("static/index.html")
@@ -35,6 +40,54 @@ async def read_index():
 @app.get("/api/models")
 async def get_models():
     return {"models": AI_MODELS_CATALOG}
+
+@app.post("/api/validate-key")
+async def validate_key(req: KeyCheckRequest):
+    """Make a small authenticated request; the key is never stored by this server."""
+    model = next((m for m in AI_MODELS_CATALOG if m["id"] == req.model_id), None)
+    if not model:
+        return {"valid": False, "message": "Unknown provider."}
+    key = req.api_key.strip()
+    if not key:
+        return {"valid": False, "message": "Paste an API key first."}
+    try:
+        headers = {"Authorization": f"Bearer {key}"}
+        timeout = httpx.Timeout(12.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if req.model_id == "gemini-2.5-flash":
+                response = await client.get("https://generativelanguage.googleapis.com/v1beta/models", params={"key": key})
+            elif req.model_id == "cohere":
+                response = await client.get("https://api.cohere.com/v1/models", headers=headers)
+            else:
+                base_urls = {
+                    "groq-llama": "https://api.groq.com/openai/v1/models",
+                    "openrouter-free": "https://openrouter.ai/api/v1/models",
+                    "mistral": "https://api.mistral.ai/v1/models",
+                    "cerebras": "https://api.cerebras.ai/v1/models",
+                    "fireworks": "https://api.fireworks.ai/inference/v1/models",
+                    "kimi": "https://api.moonshot.ai/v1/models",
+                    "together": "https://api.together.xyz/v1/models",
+                    "deepseek": "https://api.deepseek.com/models",
+                    "anthropic": "https://api.anthropic.com/v1/models",
+                    "openai": "https://api.openai.com/v1/models"
+                }
+                url = base_urls.get(req.model_id)
+                if not url:
+                    return {"valid": False, "message": "This provider cannot be checked automatically yet."}
+                if req.model_id == "anthropic":
+                    headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
+                response = await client.get(url, headers=headers)
+            if response.status_code in (200, 201):
+                return {"valid": True, "message": "API key accepted by the provider."}
+            if response.status_code in (401, 403):
+                return {"valid": False, "message": "The provider rejected this key (401/403)."}
+            if response.status_code == 429:
+                return {"valid": True, "limited": True, "message": "Key accepted, but this provider is rate-limited right now."}
+            return {"valid": False, "message": f"Provider returned HTTP {response.status_code}. Check the provider console."}
+    except httpx.TimeoutException:
+        return {"valid": False, "message": "Provider check timed out. Try again."}
+    except httpx.HTTPError as exc:
+        return {"valid": False, "message": f"Could not reach provider: {exc.__class__.__name__}."}
 
 @app.post("/api/run-agent")
 async def run_agent(req: AgentRequest):
