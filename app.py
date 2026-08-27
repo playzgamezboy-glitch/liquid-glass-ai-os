@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 
-app = FastAPI(title="LiquidGlass OS Agent Orchestrator")
+app = FastAPI(title="Thanos OS Agent Orchestrator")
 
 AI_MODELS_CATALOG = [
     {
@@ -111,7 +111,7 @@ async def run_agent(req: AgentRequest):
             {"phase": "executing", "agent": "Executor (Groq Llama 3.3)", "specialty": "Generation", "status": "Executing operation...", "output": "Operation executed."}
         ]
 
-    return {"status": "success", "inferred_mode": inferred_mode, "strategy": req.team_strategy, "steps": steps, "summary": "Task completed successfully."}
+    return {"status": "success", "inferred_mode": inferred_mode, "strategy": req.team_strategy, "steps": steps, "summary": "Task completed successfully using Thanos multi-AI orchestration."}
 
 if __name__ == "__main__":
     import uvicorn
