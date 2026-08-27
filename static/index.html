@@ -56,6 +56,20 @@
             border-color: rgba(110, 255, 190, 0.75) !important;
             box-shadow: 0 0 0 1px rgba(110, 255, 190, 0.22), 0 0 22px rgba(110, 255, 190, 0.18), inset 0 1px 0 rgba(190, 255, 225, 0.18);
         }
+        @font-face {
+            font-family: 'SF Pro Display Local';
+            src: url('/fonts/SF-Pro-Display-Medium.woff2') format('woff2');
+            font-weight: 500;
+            font-display: swap;
+        }
+        * { transition: background-color .22s ease, border-color .22s ease, opacity .22s ease, transform .22s ease; }
+        body { font-family: 'SF Pro Display Local', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif; letter-spacing: -0.012em; }
+        .typing-dots span { display:inline-block; width:4px; height:4px; margin:0 2px; border-radius:50%; background:#cbd5e1; animation: typing 1.1s infinite ease-in-out; }
+        .typing-dots span:nth-child(2) { animation-delay:.15s; } .typing-dots span:nth-child(3) { animation-delay:.3s; }
+        @keyframes typing { 0%,60%,100% { opacity:.25; transform:translateY(0); } 30% { opacity:1; transform:translateY(-3px); } }
+        .monitor-side { position:fixed; top:1rem; right:1rem; bottom:1rem; width:min(380px,calc(100vw - 2rem)); z-index:30; overflow:auto; animation:slideIn .28s ease both; }
+        @keyframes slideIn { from { opacity:0; transform:translateX(18px); } to { opacity:1; transform:translateX(0); } }
+        @media (max-width: 800px) { .monitor-side { top:auto; height:48vh; } }
         ::-webkit-scrollbar {
             width: 5px;
             height: 5px;
@@ -114,7 +128,7 @@
         </div>
 
         <!-- Collapsible Monitor Drawer (Hidden by default, shown when Monitor AI is clicked) -->
-        <div id="monitorDrawer" class="hidden w-full max-w-3xl liquid-glass rounded-4xl p-5 mb-6 space-y-3 animate-fade-in border border-white/15">
+        <div id="monitorDrawer" class="hidden monitor-side liquid-glass rounded-4xl p-5 space-y-3 border border-white/15">
             <div class="flex items-center justify-between border-b border-white/10 pb-3">
                 <div class="flex items-center space-x-2">
                     <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -144,7 +158,12 @@
                     <select id="modeSelect" class="bg-white/10 text-slate-200 text-[11px] rounded-xl px-3 py-1.5 border border-white/15 focus:outline-none focus:ring-1 focus:ring-white/40">
                         <option value="auto">⚡ Auto-Infer Mode</option>
                         <option value="agent">🤖 Agent Mode (OS / Files / Gmail)</option>
+                        <option value="research">🔎 Research Mode (web sources)</option>
                         <option value="code">💻 Code Mode (Engineering)</option>
+                    </select>
+                    <select id="strategySelect" class="bg-white/10 text-slate-200 text-[11px] rounded-xl px-3 py-1.5 border border-white/15 focus:outline-none focus:ring-1 focus:ring-white/40">
+                        <option value="collaborative">◉ Team: Collaborate</option>
+                        <option value="single">○ One provider</option>
                     </select>
 
                     <input type="text" id="targetDirInput" placeholder="Target folder (optional)" class="hidden sm:block bg-black/40 text-slate-300 text-[11px] rounded-xl px-3 py-1.5 border border-white/15 placeholder-slate-600 focus:outline-none w-36">
@@ -307,6 +326,35 @@
             }
         }
 
+        function scrollChat() {
+            const chat = document.getElementById('chatContainer');
+            chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' });
+        }
+
+        async function requestActionApproval(action, details) {
+            const response = await fetch('/api/action/plan', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action, ...details}) });
+            const data = await response.json();
+            if (!data.action_id) throw new Error(data.message || 'Could not prepare approval request.');
+            const chat = document.getElementById('chatContainer');
+            chat.innerHTML += `<div id="approval-${data.action_id}" class="liquid-glass rounded-3xl p-4 text-xs text-slate-200 max-w-lg border border-amber-300/30"><div class="font-semibold text-white mb-2">Approval required</div><p class="text-slate-300 mb-3">${data.summary}. Nothing has changed or been sent.</p><div class="flex gap-2"><button class="px-3 py-1.5 rounded-xl bg-white text-black" onclick="approveAction('${data.action_id}', true)">Approve</button><button class="px-3 py-1.5 rounded-xl bg-white/10 text-white" onclick="approveAction('${data.action_id}', false)">Reject</button></div></div>`;
+            scrollChat();
+        }
+
+        async function approveAction(actionId, approved) {
+            const response = await fetch('/api/action/approve', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action_id:actionId, approved})});
+            const data = await response.json();
+            const card = document.getElementById('approval-' + actionId);
+            if (card) card.innerHTML = `<div class="font-semibold text-white">${data.status === 'approved' ? 'Approved' : 'Rejected'}</div><p class="text-slate-300 mt-1">${data.message || 'Action updated.'}</p>`;
+            scrollChat();
+        }
+
+        document.getElementById('promptInput').addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                runAgent();
+            }
+        });
+
         async function runAgent() {
             const promptInput = document.getElementById('promptInput');
             const prompt = promptInput.value.trim();
@@ -314,11 +362,22 @@
 
             const mode = document.getElementById('modeSelect').value;
             const targetDir = document.getElementById('targetDirInput').value.trim();
+            const teamStrategy = document.getElementById('strategySelect').value;
             const submitBtn = document.getElementById('submitBtn');
             const statusBadge = document.getElementById('statusBadge');
             const chatContainer = document.getElementById('chatContainer');
             const outputContainer = document.getElementById('outputContainer');
             const metaInfo = document.getElementById('metaInfo');
+            if (mode === 'agent' && /\b(organize|sort|move|rename)\b.*\b(file|folder)s?\b/i.test(prompt)) {
+                promptInput.value = '';
+                await requestActionApproval('organize_files', {target_directory: targetDir});
+                return;
+            }
+            if (mode === 'agent' && /\b(send|write|email|message|gmail)\b/i.test(prompt)) {
+                promptInput.value = '';
+                await requestActionApproval('gmail_draft', {recipient:'Review recipient in Gmail', subject:'Draft prepared by Thanos', body:prompt});
+                return;
+            }
 
             // Append user prompt card
             chatContainer.innerHTML += `
@@ -329,26 +388,31 @@
                 </div>
             `;
             promptInput.value = '';
+            scrollChat();
 
             submitBtn.disabled = true;
             submitBtn.style.opacity = '0.5';
-            statusBadge.innerText = 'Orchestrating...';
+            statusBadge.innerText = 'Thinking...';
+            chatContainer.innerHTML += `<div id="thinkingIndicator" class="flex justify-start"><div class="liquid-glass rounded-3xl px-4 py-3 text-xs text-slate-300 border border-white/15"><span class="font-semibold text-white">Thanos</span> is thinking <span class="typing-dots"><span></span><span></span><span></span></span></div></div>`;
+            scrollChat();
 
             try {
-                const live = modelsData.find(m => !['gemini-2.5-flash','cohere'].includes(m.id) && localStorage.getItem('thanos-verified-' + m.id) === '1' && localStorage.getItem('thanos-key-' + m.id));
+                const apiKeys = Object.fromEntries(modelsData.filter(m => localStorage.getItem('thanos-verified-' + m.id) === '1' && localStorage.getItem('thanos-key-' + m.id)).map(m => [m.id, localStorage.getItem('thanos-key-' + m.id)]));
+                const live = modelsData.find(m => apiKeys[m.id]);
                 if (!live) {
                     throw new Error('No verified API key is active. Add a key in the AI Providers panel and press Verify first.');
                 }
                 const response = await fetch('/api/run-agent', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt, mode, target_directory: targetDir, model_id: live.id, api_key: localStorage.getItem('thanos-key-' + live.id) })
+                    body: JSON.stringify({ prompt, mode, team_strategy: teamStrategy, target_directory: targetDir, model_id: live.id, api_key: apiKeys[live.id], api_keys: apiKeys })
                 });
 
                 const data = await response.json();
+                document.getElementById('thinkingIndicator')?.remove();
 
                 if (data.status === 'error') throw new Error(data.summary);
-                metaInfo.innerText = `Mode: ${data.inferred_mode.toUpperCase()} · Provider: ${live.name}`;
+                metaInfo.innerText = `Mode: ${data.inferred_mode.toUpperCase()} · ${data.strategy || live.name}`;
                 statusBadge.innerText = 'Ready';
 
                 // Append AI response card
@@ -363,7 +427,7 @@
                         </div>
                     </div>
                 `;
-                chatContainer.scrollTop = chatContainer.scrollHeight;
+                scrollChat();
 
                 // Populate Monitor Drawer
                 let html = '';
@@ -386,14 +450,20 @@
                     `;
                 });
                 outputContainer.innerHTML = html;
+                if (data.sources?.length) {
+                    chatContainer.innerHTML += `<div class="liquid-glass rounded-3xl p-4 text-xs text-slate-300 max-w-lg border border-white/15"><div class="font-semibold text-white mb-2">Sources</div>${data.sources.map(s => `<div class="mb-1"><a class="text-slate-300 underline" target="_blank" rel="noopener" href="${s.url}">[${s.id}] ${s.title}</a></div>`).join('')}</div>`;
+                    scrollChat();
+                }
 
             } catch (err) {
+                document.getElementById('thinkingIndicator')?.remove();
                 statusBadge.innerText = 'Error';
                 chatContainer.innerHTML += `
                     <div class="p-3 rounded-2xl bg-red-500/10 border border-red-500/20 text-xs text-red-300">
                         Error: ${err.message}
                     </div>
                 `;
+                scrollChat();
             } finally {
                 submitBtn.disabled = false;
                 submitBtn.style.opacity = '1.0';
