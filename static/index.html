@@ -218,8 +218,11 @@
                         <div class="flex items-center justify-between pt-2 border-t border-white/5 text-[11px] text-slate-400">
                             <span class="max-w-[48%]">${m.free_limit}</span>
                             <div class="flex flex-col items-end gap-1">
-                                <input type="password" value="${savedKey}" oninput="saveKey('${m.id}', this.value)" placeholder="Paste API key" class="w-40 bg-black/50 border border-white/10 rounded-xl px-2.5 py-1 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-white/30">
-                                <span id="key-status-${m.id}" class="text-[10px] ${hasKey ? 'text-emerald-300' : 'text-slate-500'}">${hasKey ? '● API key added · active' : 'No key added'}</span>
+                                <div class="flex items-center gap-1">
+                                    <input id="key-${m.id}" type="password" value="${savedKey}" oninput="saveKey('${m.id}', this.value)" placeholder="Paste API key" class="w-40 bg-black/50 border border-white/10 rounded-xl px-2.5 py-1 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-white/30">
+                                    <button onclick="verifyKey('${m.id}')" class="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[10px] text-slate-200">Verify</button>
+                                </div>
+                                <span id="key-status-${m.id}" class="text-[10px] ${hasKey ? 'text-amber-200' : 'text-slate-500'}">${hasKey ? '● Key saved · click Verify' : 'No key added'}</span>
                             </div>
                         </div>
                     </div>
@@ -242,13 +245,39 @@
             if (value.trim()) {
                 localStorage.setItem('thanos-key-' + id, value.trim());
                 card.classList.add('api-ready');
-                status.className = 'text-[10px] text-emerald-300';
-                status.textContent = '● API key added · active';
+                status.className = 'text-[10px] text-amber-200';
+                status.textContent = '● Key saved · click Verify';
             } else {
                 localStorage.removeItem('thanos-key-' + id);
                 card.classList.remove('api-ready');
                 status.className = 'text-[10px] text-slate-500';
                 status.textContent = 'No key added';
+            }
+        }
+
+        async function verifyKey(id) {
+            const input = document.getElementById('key-' + id);
+            const status = document.getElementById('key-status-' + id);
+            const card = document.getElementById('card-' + id);
+            const key = input.value.trim();
+            if (!key) { status.textContent = 'Paste an API key first'; return; }
+            status.className = 'text-[10px] text-slate-300';
+            status.textContent = 'Checking with provider...';
+            try {
+                const res = await fetch('/api/validate-key', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({model_id:id, api_key:key})});
+                const data = await res.json();
+                if (data.valid) {
+                    card.classList.add('api-ready');
+                    status.className = 'text-[10px] text-emerald-300';
+                    status.textContent = data.limited ? '● Valid · rate-limited' : '● API key valid · active';
+                } else {
+                    card.classList.remove('api-ready');
+                    status.className = 'text-[10px] text-red-300';
+                    status.textContent = '● Not verified · ' + data.message;
+                }
+            } catch (err) {
+                status.className = 'text-[10px] text-red-300';
+                status.textContent = '● Check failed · server unavailable';
             }
         }
 
