@@ -54,6 +54,7 @@ class AgentRequest(BaseModel):
     model_id: Optional[str] = None
     api_key: Optional[str] = None
     api_keys: Dict[str, str] = Field(default_factory=dict)
+    history: List[dict] = Field(default_factory=list)
 
 class KeyCheckRequest(BaseModel):
     model_id: str
@@ -88,13 +89,16 @@ async def provider_models(provider: str, key: str, client: httpx.AsyncClient) ->
     data = response.json().get("data", [])
     return [x.get("id", "") for x in data if x.get("id")]
 
-async def call_provider(provider: str, key: str, prompt: str, client: httpx.AsyncClient) -> dict:
+async def call_provider(provider: str, key: str, prompt: str, client: httpx.AsyncClient, history: Optional[List[dict]] = None) -> dict:
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     available = await provider_models(provider, key, client)
     usable = [x for x in available if not any(w in x.lower() for w in ("whisper", "embed", "moderation", "audio", "guard"))]
     preferred = MODEL_PREFERENCES.get(provider, "gpt-4o-mini")
     model = next((x for x in [preferred, "llama-3.1-8b-instant", "llama-3.3-70b-versatile", "mistral-small-latest"] if x in usable), usable[0] if usable else preferred)
-    payload = {"model": model, "messages": [{"role": "system", "content": "You are one specialist on the Thanos team. Give concise, useful analysis. Do not claim to have performed actions you did not perform."}, {"role": "user", "content": prompt}], "temperature": 0.25}
+    messages = [{"role": "system", "content": "You are one specialist on the Thanos team. Give concise, useful analysis. Use the conversation context when relevant. Do not claim to have performed actions you did not perform."}]
+    messages.extend({"role": item.get("role", "user"), "content": str(item.get("content", ""))[:12000]} for item in (history or [])[-12:] if item.get("content"))
+    messages.append({"role": "user", "content": prompt})
+    payload = {"model": model, "messages": messages, "temperature": 0.25}
     response = await client.post(CHAT_ENDPOINTS[provider], headers=headers, json=payload)
     if response.status_code >= 400:
         return {"provider": provider, "model": model, "ok": False, "error": f"HTTP {response.status_code}: {response.text[:180]}"}
@@ -137,12 +141,12 @@ async def validate_key(req: KeyCheckRequest):
 async def research(req: AgentRequest):
     sources = await web_research(req.prompt)
     source_text = "\n".join(f"[{s['id']}] {s['title']} — {s['url']}" for s in sources)
-    keys = {k: v for k, v in req.api_keys.items() if v}
+    keys = {k: v for k, v in req.api_keys.items() if v and k in CHAT_ENDPOINTS}
     if req.api_key and req.model_id: keys[req.model_id] = req.api_key
     if not keys: return {"status": "success", "summary": "Research sources collected. Add a verified provider key to synthesize them.", "sources": sources, "steps": [{"phase":"research","agent":"Web Search","status":"Collected public search results","output":f"Found {len(sources)} sources."}]}
     prompt = f"Answer the user's research request using only the sources below. Cite claims inline as [1], [2], etc. Mention uncertainty and do not invent facts.\n\nUser request: {req.prompt}\n\nSources:\n{source_text}"
     async with httpx.AsyncClient(timeout=45) as client:
-        result = await call_provider(next(iter(keys)), next(iter(keys.values())), prompt, client)
+        result = await call_provider(next(iter(keys)), next(iter(keys.values())), prompt, client, req.history)
     return {"status":"success" if result.get("ok") else "error", "summary":result.get("content", result.get("error", "Research synthesis failed.")), "sources":sources, "steps":[{"phase":"research","agent":"Web Search","status":f"Collected {len(sources)} public sources.","output":source_text},{"phase":"synthesis","agent":result.get("model", "Provider"),"status":"Synthesized with citations.","output":result.get("provider", "")}]}
 
 @app.post("/api/run-agent")
@@ -157,15 +161,15 @@ async def run_agent(req: AgentRequest):
     providers = list(keys.items())
     async with httpx.AsyncClient(timeout=45) as client:
         if req.team_strategy == "single" or len(providers) == 1:
-            results = [await call_provider(providers[0][0], providers[0][1], req.prompt, client)]
+            results = [await call_provider(providers[0][0], providers[0][1], req.prompt, client, req.history)]
         else:
             specialist_prompt = f"Analyze this task independently as a specialist. Focus on your strongest contribution, risks, and a practical answer:\n\n{req.prompt}"
-            results = await asyncio.gather(*(call_provider(p, k, specialist_prompt, client) for p, k in providers))
+            results = await asyncio.gather(*(call_provider(p, k, specialist_prompt, client, req.history) for p, k in providers))
             good = [r for r in results if r.get("ok")]
             if len(good) > 1:
                 synthesis = "\n\n".join(f"[{r['provider']} / {r['model']}]\n{r['content']}" for r in good)
                 final_prompt = f"You are the lead. Combine these independent specialist reports into one accurate answer to the original request. Resolve disagreements explicitly and do not mention hidden reasoning.\nOriginal request: {req.prompt}\nReports:\n{synthesis}"
-                lead = await call_provider(good[0]["provider"], good[0].get("provider") and keys[good[0]["provider"]], final_prompt, client)
+                lead = await call_provider(good[0]["provider"], good[0].get("provider") and keys[good[0]["provider"]], final_prompt, client, req.history)
                 if lead.get("ok"): results.append({**lead, "provider":"Lead synthesis", "model":lead.get("model")})
     good = [r for r in results if r.get("ok")]
     if not good: return {"status":"error","inferred_mode":mode,"summary":"All selected providers failed: " + "; ".join(r.get("error", "unknown error") for r in results),"steps":[]}
@@ -195,7 +199,8 @@ async def approve_action(req: ApprovalRequest):
         return {"status":"rejected","message":"Action rejected. Nothing changed."}
     if item["action"] == "gmail_draft":
         item["status"] = "approved_draft"
-        return {"status":"approved","message":"Gmail action approved as a draft only. Sending still requires a visible human action in Gmail.","draft":item}
+        compose = "https://mail.google.com/mail/?view=cm&fs=1&tf=1&to=" + quote(item.get("recipient") or "") + "&su=" + quote(item.get("subject") or "") + "&body=" + quote(item.get("body") or "")
+        return {"status":"approved","message":"Gmail draft prepared. Open it, review it, and send it yourself.","compose_url":compose,"draft":item}
     directory = Path(item.get("target_directory") or "").expanduser()
     if not directory.is_dir(): return {"status":"error","message":"Folder does not exist; no files changed."}
     moves = []
