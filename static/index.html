@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LiquidGlass OS &bull; AI Orchestrator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['-apple-system', 'BlinkMacSystemFont', 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', 'Helvetica', 'Arial', 'sans-serif'],
+                    },
+                    colors: {
+                        glass: {
+                            100: 'rgba(255, 255, 255, 0.03)',
+                            200: 'rgba(255, 255, 255, 0.07)',
+                            300: 'rgba(255, 255, 255, 0.12)',
+                            border: 'rgba(255, 255, 255, 0.15)',
+                        }
+                    },
+                    borderRadius: {
+                        '4xl': '2rem',
+                        '5xl': '2.5rem',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .liquid-glass {
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.01));
+            backdrop-filter: blur(40px);
+            -webkit-backdrop-filter: blur(40px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        }
+        .liquid-glass-input {
+            background: rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .apple-glow {
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.01) 40%, transparent 70%);
+            filter: blur(100px);
+            z-index: -1;
+            pointer-events: none;
+        }
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 9999px;
+        }
+    </style>
+</head>
+<body class="bg-black text-slate-100 min-h-screen font-sans antialiased relative overflow-x-hidden flex flex-col items-center justify-start p-4 sm:p-8">
+
+    <div class="apple-glow top-10 left-1/4"></div>
+    <div class="apple-glow bottom-10 right-1/4" style="background: radial-gradient(circle, rgba(200, 200, 200, 0.03) 0%, transparent 60%);"></div>
+
+    <!-- Header & Tab Navigation -->
+    <header class="w-full max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between py-5 mb-8 px-8 liquid-glass rounded-4xl gap-4">
+        <div class="flex items-center space-x-3">
+            <div class="w-9 h-9 rounded-xl bg-white text-black flex items-center justify-center font-bold text-sm shadow-md">
+                AI
+            </div>
+            <div>
+                <h1 class="font-semibold text-base tracking-tight text-white">LiquidGlass OS</h1>
+                <p class="text-xs text-slate-400 font-light">Thanos Infinity AI Glove & Local Computer Control</p>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-2 bg-white/5 p-1.5 rounded-2xl border border-white/10">
+            <button onclick="switchTab('console')" id="navConsole" class="px-4 py-2 rounded-xl text-xs font-medium bg-white text-black transition-all shadow-sm">Agent Console</button>
+            <button onclick="switchTab('thanos')" id="navThanos" class="px-4 py-2 rounded-xl text-xs font-medium text-slate-300 hover:text-white transition-all">Thanos Glove (Models)</button>
+        </div>
+    </header>
+
+    <div class="w-full max-w-5xl flex-1 flex flex-col">
+
+        <!-- VIEW 1: AGENT CONSOLE -->
+        <div id="viewConsole" class="grid grid-cols-1 md:grid-cols-3 gap-6 flex-1">
+
+            <!-- Controls Column -->
+            <div class="md:col-span-1 space-y-6">
+                <div class="liquid-glass rounded-4xl p-6 space-y-5">
+                    <h2 class="text-xs font-semibold tracking-widest text-slate-400 uppercase">Configuration</h2>
+                    
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-2 font-light">Operating Mode</label>
+                        <select id="modeSelect" class="w-full liquid-glass-input rounded-2xl px-4 py-3 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-white/40">
+                            <option value="auto">✨ Auto-Infer Mode</option>
+                            <option value="agent">🤖 Agent Mode (Desktop / OS)</option>
+                            <option value="code">💻 Code Mode (Engineering)</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-2 font-light">Target Directory (For File Tools)</label>
+                        <input type="text" id="targetDirInput" placeholder="e.g. C:\Users\Name\Desktop or ~/Downloads" class="w-full liquid-glass-input rounded-2xl px-4 py-3 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-white/40">
+                    </div>
+
+                    <div class="pt-3 border-t border-white/10">
+                        <div class="flex items-center justify-between text-xs text-slate-400 mb-1">
+                            <span>Active Thanos Stones</span>
+                            <span id="activeCount" class="text-white font-mono">4 / 6</span>
+                        </div>
+                        <p class="text-[11px] text-slate-500 font-light">Models route automatically based on specialty and free rate limits.</p>
+                    </div>
+                </div>
+
+                <div class="liquid-glass rounded-4xl p-6 space-y-3">
+                    <h3 class="text-xs font-semibold text-slate-300 uppercase tracking-wider">Local Computer Tools</h3>
+                    <p class="text-xs text-slate-400 font-light leading-relaxed">
+                        The agent can reorganize local files by extension and open Gmail in your browser to draft and confirm messages right in front of you.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Prompt & Stream Column -->
+            <div class="md:col-span-2 space-y-6 flex flex-col">
+                <div class="liquid-glass rounded-4xl p-6 space-y-4">
+                    <h2 class="text-xs font-semibold tracking-widest text-slate-400 uppercase">Task Prompt</h2>
+                    <textarea id="promptInput" rows="4" placeholder="e.g. Organize my desktop files into folders by extension, or open Gmail and send an email to John..." class="w-full liquid-glass-input rounded-3xl p-4 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-white/40 resize-none"></textarea>
+                    
+                    <div class="flex items-center justify-between">
+                        <div id="statusBadge" class="text-xs text-slate-400 flex items-center space-x-2">
+                            <span class="w-2 h-2 rounded-full bg-slate-500"></span>
+                            <span>Ready</span>
+                        </div>
+                        <button onclick="runAgent()" id="submitBtn" class="px-6 py-3 rounded-2xl bg-white text-black font-medium text-xs shadow-lg hover:bg-slate-200 transition-all flex items-center space-x-2">
+                            <span>Deploy Agent Network</span>
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Execution Stream -->
+                <div class="liquid-glass rounded-4xl p-6 flex-1 min-h-[320px] flex flex-col space-y-4">
+                    <div class="flex items-center justify-between border-b border-white/10 pb-3">
+                        <h3 class="text-xs font-semibold tracking-widest text-slate-400 uppercase">Execution Stream</h3>
+                        <div id="metaInfo" class="text-xs text-slate-300 font-mono"></div>
+                    </div>
+
+                    <div id="outputContainer" class="flex-1 space-y-3 overflow-y-auto max-h-[380px] pr-2">
+                        <div class="text-center text-slate-600 py-16 text-xs font-light">
+                            Enter a prompt above (e.g., "Organize my files" or "Open Gmail") to watch your agent execute local tasks.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- VIEW 2: THANOS GLOVE (MODEL MANAGEMENT) -->
+        <div id="viewThanos" class="hidden space-y-6">
+            <div class="liquid-glass rounded-4xl p-6 space-y-4">
+                <div class="flex items-center justify-between border-b border-white/10 pb-4">
+                    <div>
+                        <h2 class="text-sm font-semibold text-white">Thanos Infinity AI Glove &bull; Model Manager</h2>
+                        <p class="text-xs text-slate-400 font-light mt-0.5">Plug in API keys for all major AI models. Click any model portal link to get your free key instantly.</p>
+                    </div>
+                    <span class="px-3 py-1 rounded-full text-xs bg-white/10 text-slate-200 font-mono border border-white/10">6 Models Loaded</span>
+                </div>
+
+                <div id="modelsGrid" class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <footer class="w-full max-w-5xl mx-auto text-center py-6 text-xs text-slate-500 font-light">
+        LiquidGlass OS &bull; Minimalist Apple Aesthetic &bull; Specialty-Routed Free Tier Orchestrator
+    </footer>
+
+    <script>
+        let modelsData = [];
+
+        async function loadModels() {
+            try {
+                const res = await fetch('/api/models');
+                const data = await res.json();
+                modelsData = data.models;
+                renderModels();
+                updateActiveCount();
+            } catch (err) {
+                console.error('Failed to load models:', err);
+            }
+        }
+
+        function renderModels() {
+            const grid = document.getElementById('modelsGrid');
+            let html = '';
+            modelsData.forEach(m => {
+                const isActive = m.status === 'active';
+                html += `
+                    <div class="liquid-glass-input rounded-3xl p-5 space-y-3 border border-white/10 flex flex-col justify-between">
+                        <div class="flex items-start justify-between">
+                            <div>
+                                <h4 class="text-xs font-semibold text-white">${m.name}</h4>
+                                <a href="${m.url}" target="_blank" class="text-[10px] text-indigo-400 hover:underline font-mono flex items-center space-x-1 mt-0.5">
+                                    <span>Get Key from ${m.provider} ↗</span>
+                                </a>
+                            </div>
+                            <button onclick="toggleModel('${m.id}')" class="px-3 py-1 rounded-xl text-[11px] font-medium transition-all ${isActive ? 'bg-white text-black' : 'bg-white/10 text-slate-400 hover:text-white'}">
+                                ${isActive ? '⚡ Active Stone' : 'Inactive'}
+                            </button>
+                        </div>
+                        <p class="text-xs text-slate-300 font-light"><strong>Specialty:</strong> ${m.specialty}</p>
+                        <div class="flex items-center justify-between pt-2 border-t border-white/5 text-[11px] text-slate-400">
+                            <span>Free Limit: ${m.free_limit}</span>
+                            <input type="password" placeholder="API Key (Optional)" class="w-36 bg-black/50 border border-white/10 rounded-xl px-2.5 py-1 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-white/30">
+                        </div>
+                    </div>
+                `;
+            });
+            grid.innerHTML = html;
+        }
+
+        function toggleModel(id) {
+            const model = modelsData.models.find(m => m.id === id); // fixed reference in app
+            // fallback search
+            const mObj = modelsData.find(m => m.id === id);
+            if (mObj) {
+                mObj.status = mObj.status === 'active' ? 'inactive' : 'active';
+                renderModels();
+                updateActiveCount();
+            }
+        }
+
+        function updateActiveCount() {
+            const active = modelsData.filter(m => m.status === 'active').length;
+            document.getElementById('activeCount').innerText = `${active} / ${modelsData.length}`;
+        }
+
+        function switchTab(tab) {
+            const consoleView = document.getElementById('viewConsole');
+            const thanosView = document.getElementById('viewThanos');
+            const navConsole = document.getElementById('navConsole');
+            const navThanos = document.getElementById('navThanos');
+
+            if (tab === 'console') {
+                consoleView.classList.remove('hidden');
+                thanosView.classList.add('hidden');
+                navConsole.className = "px-4 py-2 rounded-xl text-xs font-medium bg-white text-black transition-all shadow-sm";
+                navThanos.className = "px-4 py-2 rounded-xl text-xs font-medium text-slate-300 hover:text-white transition-all";
+            } else {
+                consoleView.classList.add('hidden');
+                thanosView.classList.remove('hidden');
+                navThanos.className = "px-4 py-2 rounded-xl text-xs font-medium bg-white text-black transition-all shadow-sm";
+                navConsole.className = "px-4 py-2 rounded-xl text-xs font-medium text-slate-300 hover:text-white transition-all";
+            }
+        }
+
+        async function runAgent() {
+            const prompt = document.getElementById('promptInput').value.trim();
+            if (!prompt) {
+                alert('Please enter a prompt or task first.');
+                return;
+            }
+
+            const mode = document.getElementById('modeSelect').value;
+            const strategy = document.getElementById('strategySelect').value;
+            const targetDir = document.getElementById('targetDirInput').value.trim();
+            const submitBtn = document.getElementById('submitBtn');
+            const statusBadge = document.getElementById('statusBadge');
+            const outputContainer = document.getElementById('outputContainer');
+            const metaInfo = document.getElementById('metaInfo');
+
+            submitBtn.disabled = true;
+            submitBtn.style.opacity = '0.5';
+            statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-white animate-ping"></span><span class="text-white">Orchestrating agents...</span>`;
+            outputContainer.innerHTML = `<div class="flex items-center justify-center py-16 text-slate-400 text-xs font-light animate-pulse">Routing via Thanos AI Glove & local computer tools...</div>`;
+
+            try {
+                const response = await fetch('/api/run-agent', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt, mode, team_strategy: strategy, target_directory: targetDir })
+                });
+
+                const data = await response.json();
+
+                metaInfo.innerText = `Mode: ${data.inferred_mode.toUpperCase()} | Strategy: ${data.strategy.toUpperCase()}`;
+                statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400"></span><span class="text-emerald-400">Complete</span>`;
+
+                let html = '';
+                data.steps.forEach((step, idx) => {
+                    const isThinking = step.phase === 'thinking';
+                    html += `
+                        <div class="liquid-glass-input rounded-3xl p-5 space-y-3 border border-white/10">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center space-x-2">
+                                    <span class="px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider ${isThinking ? 'bg-white/10 text-slate-300 border border-white/10' : 'bg-white text-black font-medium'}">${step.phase}</span>
+                                    <span class="text-xs font-semibold text-white">${step.agent}</span>
+                                </div>
+                                <span class="text-[11px] text-slate-500 font-mono">Step ${idx + 1}</span>
+                            </div>
+                            <p class="text-xs text-slate-300 font-light"><strong>Specialty:</strong> ${step.specialty}</p>
+                            <p class="text-xs text-slate-400 font-light italic">${step.status}</p>
+                            <div class="bg-black/60 rounded-2xl p-3.5 font-mono text-[11px] text-slate-200 border border-white/5">
+                                ${step.output}
+                            </div>
+                        </div>
+                    `;
+                });
+
+                html += `
+                    <div class="p-4 rounded-2xl bg-white/5 border border-white/10 text-xs text-slate-300 font-light">
+                        <strong>Summary:</strong> ${data.summary}
+                    </div>
+                `;
+
+                outputContainer.innerHTML = html;
+
+            } catch (err) {
+                statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-red-400"></span><span class="text-red-400">Error</span>`;
+                outputContainer.innerHTML = `<div class="p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 font-light">Error connecting to orchestrator: ${err.message}</div>`;
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.style.opacity = '1.0';
+            }
+        }
+
+        loadModels();
+    </script>
+</body>
+</html>
