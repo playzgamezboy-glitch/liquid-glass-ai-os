@@ -52,6 +52,10 @@
             z-index: -1;
             pointer-events: none;
         }
+        .api-ready {
+            border-color: rgba(110, 255, 190, 0.75) !important;
+            box-shadow: 0 0 0 1px rgba(110, 255, 190, 0.22), 0 0 22px rgba(110, 255, 190, 0.18), inset 0 1px 0 rgba(190, 255, 225, 0.18);
+        }
         ::-webkit-scrollbar {
             width: 5px;
             height: 5px;
@@ -194,24 +198,29 @@
             const grid = document.getElementById('modelsGrid');
             let html = '';
             modelsData.forEach(m => {
-                const isActive = m.status === 'active';
+                const savedKey = localStorage.getItem('thanos-key-' + m.id) || '';
+                const isActive = m.status === 'available' || m.status === 'active';
+                const hasKey = savedKey.length > 0;
                 html += `
-                    <div class="liquid-glass-input rounded-3xl p-4 space-y-2 border border-white/10 flex flex-col justify-between">
+                    <div id="card-${m.id}" class="liquid-glass-input rounded-3xl p-4 space-y-2 border border-white/10 flex flex-col justify-between ${hasKey ? 'api-ready' : ''}">
                         <div class="flex items-start justify-between">
                             <div>
                                 <h4 class="text-xs font-semibold text-white">${m.name}</h4>
-                                <a href="${m.url}" target="_blank" class="text-[10px] text-indigo-400 hover:underline font-mono flex items-center space-x-1 mt-0.5">
-                                    <span>Get Free Key from ${m.provider} ↗</span>
+                                <a href="${m.url}" target="_blank" rel="noopener noreferrer" class="text-[10px] text-indigo-400 hover:underline font-mono flex items-center space-x-1 mt-0.5">
+                                    <span>Open official key page ↗</span>
                                 </a>
                             </div>
                             <button onclick="toggleModel('${m.id}')" class="px-3 py-1 rounded-xl text-[11px] font-medium transition-all ${isActive ? 'bg-white text-black' : 'bg-white/10 text-slate-400 hover:text-white'}">
-                                ${isActive ? '⚡ Active Stone' : 'Inactive'}
+                                ${isActive ? '⚡ Enabled' : 'Disabled'}
                             </button>
                         </div>
                         <p class="text-xs text-slate-300 font-light"><strong>Specialty:</strong> ${m.specialty}</p>
                         <div class="flex items-center justify-between pt-2 border-t border-white/5 text-[11px] text-slate-400">
-                            <span>Free Limit: ${m.free_limit}</span>
-                            <input type="password" placeholder="API Key (Optional)" class="w-40 bg-black/50 border border-white/10 rounded-xl px-2.5 py-1 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-white/30">
+                            <span class="max-w-[48%]">${m.free_limit}</span>
+                            <div class="flex flex-col items-end gap-1">
+                                <input type="password" value="${savedKey}" oninput="saveKey('${m.id}', this.value)" placeholder="Paste API key" class="w-40 bg-black/50 border border-white/10 rounded-xl px-2.5 py-1 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-white/30">
+                                <span id="key-status-${m.id}" class="text-[10px] ${hasKey ? 'text-emerald-300' : 'text-slate-500'}">${hasKey ? '● API key added · active' : 'No key added'}</span>
+                            </div>
                         </div>
                     </div>
                 `;
@@ -222,8 +231,24 @@
         function toggleModel(id) {
             const model = modelsData.find(m => m.id === id);
             if (model) {
-                model.status = model.status === 'active' ? 'inactive' : 'active';
+                model.status = (model.status === 'available' || model.status === 'active') ? 'inactive' : 'available';
                 renderModels();
+            }
+        }
+
+        function saveKey(id, value) {
+            const card = document.getElementById('card-' + id);
+            const status = document.getElementById('key-status-' + id);
+            if (value.trim()) {
+                localStorage.setItem('thanos-key-' + id, value.trim());
+                card.classList.add('api-ready');
+                status.className = 'text-[10px] text-emerald-300';
+                status.textContent = '● API key added · active';
+            } else {
+                localStorage.removeItem('thanos-key-' + id);
+                card.classList.remove('api-ready');
+                status.className = 'text-[10px] text-slate-500';
+                status.textContent = 'No key added';
             }
         }
 
