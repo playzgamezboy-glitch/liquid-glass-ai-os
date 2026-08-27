@@ -199,6 +199,7 @@
             let html = '';
             modelsData.forEach(m => {
                 const savedKey = localStorage.getItem('thanos-key-' + m.id) || '';
+                const verified = localStorage.getItem('thanos-verified-' + m.id) === '1';
                 const isActive = m.status === 'available' || m.status === 'active';
                 const hasKey = savedKey.length > 0;
                 html += `
@@ -222,7 +223,7 @@
                                     <input id="key-${m.id}" type="password" value="${savedKey}" oninput="saveKey('${m.id}', this.value)" placeholder="Paste API key" class="w-40 bg-black/50 border border-white/10 rounded-xl px-2.5 py-1 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-white/30">
                                     <button onclick="verifyKey('${m.id}')" class="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[10px] text-slate-200">Verify</button>
                                 </div>
-                                <span id="key-status-${m.id}" class="text-[10px] ${hasKey ? 'text-amber-200' : 'text-slate-500'}">${hasKey ? '● Key saved · click Verify' : 'No key added'}</span>
+                                <span id="key-status-${m.id}" class="text-[10px] ${verified ? 'text-emerald-300' : hasKey ? 'text-amber-200' : 'text-slate-500'}">${verified ? '● API key valid · active' : hasKey ? '● Key saved · click Verify' : 'No key added'}</span>
                             </div>
                         </div>
                     </div>
@@ -249,6 +250,7 @@
                 status.textContent = '● Key saved · click Verify';
             } else {
                 localStorage.removeItem('thanos-key-' + id);
+                localStorage.removeItem('thanos-verified-' + id);
                 card.classList.remove('api-ready');
                 status.className = 'text-[10px] text-slate-500';
                 status.textContent = 'No key added';
@@ -267,10 +269,12 @@
                 const res = await fetch('/api/validate-key', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({model_id:id, api_key:key})});
                 const data = await res.json();
                 if (data.valid) {
+                    localStorage.setItem('thanos-verified-' + id, '1');
                     card.classList.add('api-ready');
                     status.className = 'text-[10px] text-emerald-300';
                     status.textContent = data.limited ? '● Valid · rate-limited' : '● API key valid · active';
                 } else {
+                    localStorage.removeItem('thanos-verified-' + id);
                     card.classList.remove('api-ready');
                     status.className = 'text-[10px] text-red-300';
                     status.textContent = '● Not verified · ' + data.message;
@@ -331,15 +335,20 @@
             statusBadge.innerText = 'Orchestrating...';
 
             try {
+                const live = modelsData.find(m => !['gemini-2.5-flash','cohere'].includes(m.id) && localStorage.getItem('thanos-verified-' + m.id) === '1' && localStorage.getItem('thanos-key-' + m.id));
+                if (!live) {
+                    throw new Error('No verified API key is active. Add a key in the AI Providers panel and press Verify first.');
+                }
                 const response = await fetch('/api/run-agent', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt, mode, target_directory: targetDir })
+                    body: JSON.stringify({ prompt, mode, target_directory: targetDir, model_id: live.id, api_key: localStorage.getItem('thanos-key-' + live.id) })
                 });
 
                 const data = await response.json();
 
-                metaInfo.innerText = `Mode: ${data.inferred_mode.toUpperCase()}`;
+                if (data.status === 'error') throw new Error(data.summary);
+                metaInfo.innerText = `Mode: ${data.inferred_mode.toUpperCase()} · Provider: ${live.name}`;
                 statusBadge.innerText = 'Ready';
 
                 // Append AI response card
