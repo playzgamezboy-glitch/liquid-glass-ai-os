@@ -1,145 +1,123 @@
-import asyncio, json, math, os, statistics, time, uuid
-from datetime import datetime, timedelta, timezone
+import asyncio,json,uuid,xml.etree.ElementTree as ET
+from datetime import datetime,timezone
 from pathlib import Path
-from typing import Optional
 from urllib.parse import quote
-import xml.etree.ElementTree as ET
-
 import httpx
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import BaseModel, Field
-
-app = FastAPI(title="PaperTrade Lab")
-STATE_FILE = Path("paper_state.json")
-DEFAULT_SETTINGS = {"starting_cash": 50.0, "target_cash": 60.0, "position_stop_price": 30.0, "trade_frequency": "balanced", "news_mode": "filtered", "universe": ["SPY", "QQQ", "DIA", "IWM"]}
-
-def load_state():
-    if STATE_FILE.exists():
-        try: return json.loads(STATE_FILE.read_text())
-        except Exception: pass
-    return {"cash": 50.0, "starting_cash": 50.0, "target_cash": 60.0, "positions": {}, "trades": [], "settings": DEFAULT_SETTINGS, "journal": []}
-state = load_state()
-
-def save_state(): STATE_FILE.write_text(json.dumps(state, indent=2))
-
+from fastapi.responses import FileResponse,HTMLResponse
+from pydantic import BaseModel,Field
+app=FastAPI(title='PaperTrade Lab Crypto')
+STATE_FILE=Path('paper_state.json')
+DEFAULT={'starting_cash':50.0,'target_cash':60.0,'position_size':10.0,'max_loss':3.0,'auto_paper':False,'interval':'1h','universe':['BTCUSDT','ETHUSDT','SOLUSDT'],'news_mode':'filtered'}
+def load():
+ try:return json.loads(STATE_FILE.read_text())
+ except:return {'cash':50.0,'positions':{},'trades':[],'settings':DEFAULT,'journal':[]}
+state=load(); state.setdefault('settings',{}); state['settings']={**DEFAULT,**state['settings']}; state.setdefault('positions',{}); state.setdefault('trades',[]); state.setdefault('cash',50.0)
+def save():STATE_FILE.write_text(json.dumps(state,indent=2))
 class Settings(BaseModel):
-    starting_cash: float = 50.0
-    target_cash: float = 60.0
-    position_stop_price: float = 30.0
-    trade_frequency: str = "balanced"
-    news_mode: str = "filtered"
-    universe: list[str] = Field(default_factory=lambda: ["SPY", "QQQ", "DIA", "IWM"])
-class SymbolRequest(BaseModel): symbol: str
-class BacktestRequest(BaseModel): symbol: str = "SPY"; days: int = 730; initial_cash: float = 50.0
-class TradeRequest(BaseModel): symbol: str; side: str; pounds: float = 10.0; reason: str = "Manual paper trade"
-
-async def yahoo_chart(symbol: str, range_: str = "2y", interval: str = "1d"):
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(symbol.upper())}?range={range_}&interval={interval}&events=div%2Csplits"
-    async with httpx.AsyncClient(timeout=8, headers={"User-Agent":"PaperTradeLab/1.0"}) as client:
-        r = await client.get(url); r.raise_for_status(); result = r.json()["chart"]["result"][0]
-    q = result["indicators"]["quote"][0]; timestamps = result.get("timestamp", [])
-    rows=[]
-    for i, ts in enumerate(timestamps):
-        close = q.get("close", [])[i] if i < len(q.get("close", [])) else None
-        if close is not None: rows.append({"date":datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d"), "open":q.get("open", [None]*len(timestamps))[i], "high":q.get("high", [None]*len(timestamps))[i], "low":q.get("low", [None]*len(timestamps))[i], "close":close, "volume":q.get("volume", [None]*len(timestamps))[i]})
-    return rows
-
-def sma(values, n): return sum(values[-n:]) / n if len(values) >= n else None
-def rsi(values, n=14):
-    if len(values) <= n: return None
-    gains=[]; losses=[]
-    for a,b in zip(values[-n-1:-1], values[-n:]):
-        d=b-a; gains.append(max(d,0)); losses.append(max(-d,0))
-    avg_gain=sum(gains)/n; avg_loss=sum(losses)/n
-    return 100 if avg_loss == 0 else 100-(100/(1+avg_gain/avg_loss))
+ starting_cash:float=50;target_cash:float=60;position_size:float=10;max_loss:float=3;auto_paper:bool=False;interval:str='1h';universe:list[str]=Field(default_factory=lambda:['BTCUSDT','ETHUSDT','SOLUSDT']);news_mode:str='filtered'
+class Trade(BaseModel):symbol:str;side:str;amount:float=10;reason:str='Manual crypto paper trade'
+class CryptoBacktest(BaseModel):symbol:str='BTCUSDT';hours:int=720;initial_cash:float=50
+async def binance(symbol,interval='1h',limit=200):
+ url=f'https://api.binance.com/api/v3/klines?symbol={symbol.upper()}&interval={interval}&limit={limit}'
+ async with httpx.AsyncClient(timeout=10,headers={'User-Agent':'PaperTradeLab/1.0'}) as c:r=await c.get(url);r.raise_for_status();data=r.json()
+ return [{'time':datetime.fromtimestamp(x[0]/1000,timezone.utc).isoformat(),'date':datetime.fromtimestamp(x[0]/1000,timezone.utc).strftime('%Y-%m-%d %H:%M'),'open':float(x[1]),'high':float(x[2]),'low':float(x[3]),'close':float(x[4]),'volume':float(x[5])} for x in data]
+def sma(a,n):return sum(a[-n:])/n if len(a)>=n else None
+def rsi(a,n=14):
+ if len(a)<=n:return None
+ g=[max(b-a,0) for a,b in zip(a[-n-1:-1],a[-n:])];l=[max(a-b,0) for a,b in zip(a[-n-1:-1],a[-n:])];ag=sum(g)/n;al=sum(l)/n
+ return 100 if al==0 else 100-100/(1+ag/al)
 def signal(rows):
-    closes=[x["close"] for x in rows]; price=closes[-1]; fast=sma(closes,20); slow=sma(closes,50); prev_fast=sma(closes[:-1],20); prev_slow=sma(closes[:-1],50); momentum=rsi(closes)
-    if not slow: return {"action":"WAIT","price":price,"reason":"Waiting for enough history."}
-    if fast > slow and prev_fast <= prev_slow and (momentum is None or momentum < 70): return {"action":"BUY","price":price,"reason":"20-day average crossed above 50-day average; RSI is not overheated."}
-    if fast < slow and prev_fast >= prev_slow: return {"action":"SELL","price":price,"reason":"20-day average crossed below 50-day average."}
-    return {"action":"HOLD","price":price,"reason":f"Trend is {('up' if fast > slow else 'down')}; waiting for a confirmed crossover."}
-
-@app.get("/", response_class=HTMLResponse)
-async def index(): return FileResponse("static/index.html")
-@app.get("/api/settings")
-async def get_settings(): return {"settings":state["settings"], "paper_only":True}
-@app.post("/api/settings")
-async def set_settings(req: Settings):
-    state["settings"] = req.model_dump(); state["starting_cash"] = req.starting_cash; state["target_cash"] = req.target_cash; save_state(); return {"status":"saved","settings":state["settings"]}
-@app.post("/api/reset")
+ a=[x['close'] for x in rows];fast=sma(a,20);slow=sma(a,50);pf=sma(a[:-1],20);ps=sma(a[:-1],50);moment=rsi(a);price=a[-1]
+ if not slow:return {'action':'WAIT','price':price,'reason':'Waiting for enough hourly candles.'}
+ if fast>slow and pf<=ps and (moment is None or moment<70):return {'action':'BUY','price':price,'reason':'20-hour average crossed above 50-hour average; RSI is below 70.'}
+ if fast<slow and pf>=ps:return {'action':'SELL','price':price,'reason':'20-hour average crossed below 50-hour average.'}
+ return {'action':'HOLD','price':price,'reason':f"Trend is {'up' if fast>slow else 'down'}; waiting for a confirmed crossover."}
+async def crypto_news(symbol):
+ url='https://www.coindesk.com/arc/outboundfeeds/rss/'
+ try:
+  async with httpx.AsyncClient(timeout=10,headers={'User-Agent':'PaperTradeLab/1.0'}) as c:r=await c.get(url)
+  root=ET.fromstring(r.text);key=symbol[:3].lower();items=[]
+  for x in root.findall('./channel/item'):
+   title=x.findtext('title','')
+   if key in title.lower() or symbol=='BTCUSDT':items.append({'title':title,'url':x.findtext('link',''),'published':x.findtext('pubDate','')})
+  return items[:8]
+ except:return []
+@app.get('/',response_class=HTMLResponse)
+async def index():return FileResponse('static/index.html')
+@app.get('/api/settings')
+async def get_settings():return {'settings':state['settings'],'paper_only':True}
+@app.post('/api/settings')
+async def set_settings(x:Settings):
+ state['settings']=x.model_dump();state['cash']=x.starting_cash;save();return {'status':'saved','settings':state['settings']}
+@app.post('/api/reset')
 async def reset():
-    state.clear(); state.update({"cash":DEFAULT_SETTINGS["starting_cash"],"starting_cash":DEFAULT_SETTINGS["starting_cash"],"target_cash":DEFAULT_SETTINGS["target_cash"],"positions":{},"trades":[],"settings":DEFAULT_SETTINGS,"journal":[]}); save_state(); return {"status":"reset"}
-@app.get("/api/quote/{symbol}")
-async def quote_data(symbol: str):
-    rows=await yahoo_chart(symbol,"5d","1d"); return {"symbol":symbol.upper(),"quote":rows[-1] if rows else None}
-@app.get("/api/candles/{symbol}")
-async def candles(symbol: str):
-    rows=await yahoo_chart(symbol,"6mo","1d")
-    return {"symbol":symbol.upper(),"candles":rows[-90:],"as_of":datetime.now(timezone.utc).isoformat()}
-@app.get("/api/market")
+ state.clear();state.update({'cash':DEFAULT['starting_cash'],'positions':{},'trades':[],'settings':DEFAULT.copy(),'journal':[]});save();return {'status':'reset'}
+@app.get('/api/crypto/market')
 async def market():
-    async def one(symbol):
-        try:
-            rows=await yahoo_chart(symbol,"5d","1d"); return {"symbol":symbol,"quote":rows[-1] if rows else None,"change":(rows[-1]["close"]-rows[-2]["close"])/rows[-2]["close"]*100 if len(rows)>1 else 0}
-        except Exception as e: return {"symbol":symbol,"error":str(e)}
-    out=await asyncio.gather(*(one(symbol) for symbol in state["settings"].get("universe", DEFAULT_SETTINGS["universe"])))
-    return {"market":out,"as_of":datetime.now(timezone.utc).isoformat()}
-@app.get("/api/news/{symbol}")
-async def news(symbol: str):
-    url=f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={quote(symbol.upper())}&region=US&lang=en-US"
-    async with httpx.AsyncClient(timeout=15, headers={"User-Agent":"PaperTradeLab/1.0"}) as client: r=await client.get(url)
-    items=[]
-    if r.status_code==200:
-        try:
-            root=ET.fromstring(r.text)
-            for item in root.findall("./channel/item")[:8]: items.append({"title":item.findtext("title",""),"url":item.findtext("link",""),"published":item.findtext("pubDate","")})
-        except ET.ParseError: pass
-    return {"symbol":symbol.upper(),"items":items,"note":"News is a filter, not a standalone buy/sell signal. Headlines can be delayed or incomplete."}
-@app.post("/api/backtest")
-async def backtest(req: BacktestRequest):
-    rows=await yahoo_chart(req.symbol,"5y","1d"); rows=rows[-req.days:]; cash=req.initial_cash; units=0.0; entry=None; curve=[]; trades=[]
-    for i in range(55,len(rows)):
-        window=rows[:i+1]; s=signal(window); price=rows[i]["close"]
-        if units==0 and s["action"]=="BUY": units= cash/price; entry=price; cash=0; trades.append({"date":rows[i]["date"],"side":"BUY","price":price})
-        elif units>0 and (s["action"]=="SELL" or units*price <= state["settings"].get("position_stop_price", 30.0)):
-            cash=units*price; trades.append({"date":rows[i]["date"],"side":"SELL","price":price,"reason":"Trend exit or position-value stop"}); units=0; entry=None
-        curve.append(cash+units*price)
-    final=(cash+units*rows[-1]["close"]) if rows else req.initial_cash; peak=req.initial_cash; draw=0
-    for v in curve: peak=max(peak,v); draw=min(draw,(v-peak)/peak if peak else 0)
-    wins=0
-    for a,b in zip(trades,trades[1:]):
-        if a["side"]=="BUY" and b["side"]=="SELL" and b["price"]>a["price"]: wins+=1
-    sells=max(1,len([x for x in trades if x["side"]=="SELL"]))
-    return {"symbol":req.symbol.upper(),"initial":req.initial_cash,"final":round(final,2),"return_pct":round((final/req.initial_cash-1)*100,2),"max_drawdown_pct":round(draw*100,2),"trades":trades,"win_rate_pct":round(wins/sells*100,2),"method":"20/50-day SMA crossover with RSI confirmation; illustrative backtest, no fees/slippage modelled."}
-@app.get("/api/portfolio")
+ async def one(s):
+  try:
+   r=await binance(s,state['settings'].get('interval','1h'),2);return {'symbol':s,'quote':r[-1],'change_pct':(r[-1]['close']/r[-2]['close']-1)*100}
+  except Exception as e:return {'symbol':s,'error':str(e)}
+ return {'market':await asyncio.gather(*(one(s) for s in state['settings'].get('universe',DEFAULT['universe']))),'as_of':datetime.now(timezone.utc).isoformat(),'source':'Binance public market data'}
+@app.get('/api/crypto/candles/{symbol}')
+async def candles(symbol:str):return {'symbol':symbol.upper(),'candles':(await binance(symbol,state['settings'].get('interval','1h'),120)),'as_of':datetime.now(timezone.utc).isoformat(),'source':'Binance public market data'}
+@app.get('/api/crypto/signal/{symbol}')
+async def crypto_signal(symbol:str):
+ rows=await binance(symbol,state['settings'].get('interval','1h'),200);s=signal(rows);n=await crypto_news(symbol);risk=any(any(w in x['title'].lower() for w in ['hack','exploit','fraud','bankrupt','collapse']) for x in n)
+ if risk and s['action']=='BUY':s={**s,'action':'WAIT','reason':'Filtered: adverse crypto headline detected; waiting for clarity.'}
+ return {'symbol':symbol.upper(),'signal':s,'news_filter':'BLOCKED' if risk else 'CLEAR','news':n}
+@app.post('/api/crypto/backtest')
+async def crypto_backtest(x:CryptoBacktest):
+ rows=await binance(x.symbol,state['settings'].get('interval','1h'),min(x.hours,1000));rows=rows[-x.hours:];cash=x.initial_cash;units=0;trades=[];curve=[]
+ for i in range(55,len(rows)):
+  s=signal(rows[:i+1]);price=rows[i]['close']
+  if units==0 and s['action']=='BUY': units=cash/price;cash=0;trades.append({'time':rows[i]['time'],'side':'BUY','price':price})
+  elif units and (s['action']=='SELL' or units*price<=state['settings'].get('max_loss',3)): cash=units*price;units=0;trades.append({'time':rows[i]['time'],'side':'SELL','price':price,'reason':'Crossover or £3 position-loss stop'})
+  curve.append(cash+units*price)
+ final=cash+units*rows[-1]['close'];peak=x.initial_cash;dd=0
+ for v in curve:peak=max(peak,v);dd=min(dd,(v-peak)/peak)
+ return {'symbol':x.symbol.upper(),'initial':x.initial_cash,'final':round(final,2),'return_pct':round((final/x.initial_cash-1)*100,2),'max_drawdown_pct':round(dd*100,2),'trades':trades,'method':'20/50-hour SMA crossover with RSI confirmation and position-loss stop; illustrative only.'}
+@app.get('/api/portfolio')
 async def portfolio():
-    total=state["cash"]; positions=[]
-    for symbol,p in state["positions"].items():
-        try: q=(await yahoo_chart(symbol,"5d","1d"))[-1]["close"]
-        except Exception: q=p["avg_price"]
-        value=p["units"]*q; total+=value; positions.append({**p,"symbol":symbol,"last_price":q,"value":value,"pnl":(q-p["avg_price"])*p["units"]})
-    return {"cash":state["cash"],"total":total,"target":state["target_cash"],"positions":positions,"trades":state["trades"][-30:],"paper_only":True}
-@app.post("/api/paper-trade")
-async def paper_trade(req: TradeRequest):
-    if req.side not in {"BUY","SELL"}: return {"status":"error","message":"Side must be BUY or SELL."}
-    rows=await yahoo_chart(req.symbol,"5d","1d"); price=rows[-1]["close"]
-    symbol=req.symbol.upper(); p=state["positions"].get(symbol)
-    if req.side=="BUY":
-        spend=min(req.pounds,state["cash"]); units=spend/price
-        if spend<=0: return {"status":"error","message":"Not enough paper cash."}
-        if p: p["units"]+=units; p["avg_price"]=(p["avg_price"]*p["units"]+price*units)/(p["units"]+units)
-        else: state["positions"][symbol]={"units":units,"avg_price":price,"stop_price":state["settings"]["position_stop_price"]}
-        state["cash"]-=spend
-    else:
-        if not p: return {"status":"error","message":"No paper position to sell."}
-        units=min(p["units"],req.pounds/price); state["cash"]+=units*price; p["units"]-=units
-        if p["units"]<1e-9: del state["positions"][symbol]
-    trade={"id":str(uuid.uuid4()),"time":datetime.now(timezone.utc).isoformat(),"symbol":symbol,"side":req.side,"price":price,"reason":req.reason,"paper":True}; state["trades"].append(trade); save_state(); return {"status":"executed","trade":trade}
-@app.get("/api/signal/{symbol}")
-async def get_signal(symbol: str):
-    rows=await yahoo_chart(symbol,"2y","1d"); s=signal(rows); n=await news(symbol); blocked=any(any(w in x["title"].lower() for w in ["bankrupt","fraud","investigation","downgrade","offering"]) for x in n["items"][:5]);
-    if blocked and s["action"]=="BUY": s={**s,"action":"WAIT","reason":"Filtered: recent headline risk detected; waiting for clarity."}
-    return {"symbol":symbol.upper(),"signal":s,"news_filter":"BLOCKED" if blocked else "CLEAR","news":n["items"][:5]}
-if __name__=="__main__":
-    import uvicorn; uvicorn.run(app,host="127.0.0.1",port=8000)
+ total=state['cash'];out=[]
+ for sym,p in state['positions'].items():
+  try:q=(await binance(sym,state['settings'].get('interval','1h'),2))[-1]['close']
+  except:q=p['entry_price']
+  val=p['units']*q;total+=val;out.append({**p,'symbol':sym,'last_price':q,'value':val,'pnl':(q-p['entry_price'])*p['units']})
+ return {'cash':state['cash'],'total':total,'target':state['settings'].get('target_cash',60),'positions':out,'trades':state['trades'][-50:],'auto_paper':state['settings'].get('auto_paper',False),'paper_only':True}
+@app.post('/api/paper-trade')
+async def paper_trade(t:Trade):
+ sym=t.symbol.upper();rows=await binance(sym,state['settings'].get('interval','1h'),2);price=rows[-1]['close'];p=state['positions'].get(sym)
+ if t.side=='BUY':
+  spend=min(t.amount,state['cash']);
+  if spend<=0:return {'status':'error','message':'Not enough paper cash.'}
+  units=spend/price
+  if p:
+   old=p['units'];p['units']+=units;p['entry_price']=(p['entry_price']*old+price*units)/p['units']
+  else:state['positions'][sym]={'units':units,'entry_price':price,'max_loss':state['settings'].get('max_loss',3)}
+  state['cash']-=spend
+ elif t.side=='SELL':
+  if not p:return {'status':'error','message':'No open paper position.'}
+  units=min(p['units'],t.amount/price);state['cash']+=units*price;p['units']-=units
+  if p['units']<1e-10:del state['positions'][sym]
+ else:return {'status':'error','message':'Side must be BUY or SELL.'}
+ tr={'id':str(uuid.uuid4()),'time':datetime.now(timezone.utc).isoformat(),'symbol':sym,'side':t.side,'price':price,'amount':t.amount,'reason':t.reason,'paper':True};state['trades'].append(tr);save();return {'status':'executed','trade':tr}
+@app.post('/api/auto/toggle')
+async def toggle():state['settings']['auto_paper']=not state['settings'].get('auto_paper',False);save();return {'auto_paper':state['settings']['auto_paper'],'paper_only':True}
+async def auto_loop():
+ while True:
+  await asyncio.sleep(60)
+  if not state['settings'].get('auto_paper',False):continue
+  for sym in state['settings'].get('universe',DEFAULT['universe']):
+   try:
+    rows=await binance(sym,state['settings'].get('interval','1h'),200);s=signal(rows);n=await crypto_news(sym);blocked=any(any(w in x['title'].lower() for w in ['hack','exploit','fraud','bankrupt','collapse']) for x in n);p=state['positions'].get(sym);price=rows[-1]['close']
+    if blocked and s['action']=='BUY':s={'action':'WAIT'}
+    if p and (price-p['entry_price'])*p['units']<=-state['settings'].get('max_loss',3):await paper_trade(Trade(symbol=sym,side='SELL',amount=p['units']*price,reason='Automatic £3 maximum-loss stop'))
+    elif s['action']=='BUY' and not p:await paper_trade(Trade(symbol=sym,side='BUY',amount=state['settings'].get('position_size',10),reason='Automatic 20/50-hour crossover buy'))
+    elif s['action']=='SELL' and p:await paper_trade(Trade(symbol=sym,side='SELL',amount=p['units']*price,reason='Automatic 20/50-hour crossover sell'))
+   except Exception:continue
+@app.on_event('startup')
+async def startup():asyncio.create_task(auto_loop())
+if __name__=='__main__':
+ import uvicorn;uvicorn.run(app,host='127.0.0.1',port=8000)
