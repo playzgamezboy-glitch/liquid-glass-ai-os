@@ -19,8 +19,12 @@ class Settings(BaseModel):
 class Trade(BaseModel):symbol:str;side:str;amount:float=10;reason:str='Manual crypto paper trade'
 class CryptoBacktest(BaseModel):symbol:str='BTCUSDT';hours:int=720;initial_cash:float=50
 async def binance(symbol,interval='1h',limit=200):
- url=f'https://api.binance.com/api/v3/klines?symbol={symbol.upper()}&interval={interval}&limit={limit}'
- async with httpx.AsyncClient(timeout=10,headers={'User-Agent':'PaperTradeLab/1.0'}) as c:r=await c.get(url);r.raise_for_status();data=r.json()
+ urls=[f'https://api.binance.com/api/v3/klines?symbol={symbol.upper()}&interval={interval}&limit={limit}',f'https://api.binance.us/api/v3/klines?symbol={symbol.upper()}&interval={interval}&limit={limit}']
+ async with httpx.AsyncClient(timeout=10,headers={'User-Agent':'PaperTradeLab/1.0'}) as c:
+  for url in urls:
+   r=await c.get(url)
+   if r.status_code<400: data=r.json();break
+  else:r.raise_for_status()
  return [{'time':datetime.fromtimestamp(x[0]/1000,timezone.utc).isoformat(),'date':datetime.fromtimestamp(x[0]/1000,timezone.utc).strftime('%Y-%m-%d %H:%M'),'open':float(x[1]),'high':float(x[2]),'low':float(x[3]),'close':float(x[4]),'volume':float(x[5])} for x in data]
 def sma(a,n):return sum(a[-n:])/n if len(a)>=n else None
 def rsi(a,n=14):
