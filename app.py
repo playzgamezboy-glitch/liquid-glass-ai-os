@@ -1,4 +1,4 @@
-import json, math, os, statistics, time, uuid
+import asyncio, json, math, os, statistics, time, uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -73,6 +73,10 @@ async def reset():
 @app.get("/api/quote/{symbol}")
 async def quote_data(symbol: str):
     rows=await yahoo_chart(symbol,"5d","1d"); return {"symbol":symbol.upper(),"quote":rows[-1] if rows else None}
+@app.get("/api/candles/{symbol}")
+async def candles(symbol: str):
+    rows=await yahoo_chart(symbol,"6mo","1d")
+    return {"symbol":symbol.upper(),"candles":rows[-90:],"as_of":datetime.now(timezone.utc).isoformat()}
 @app.get("/api/market")
 async def market():
     async def one(symbol):
